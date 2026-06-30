@@ -15,14 +15,27 @@ import org.springframework.stereotype.Service;
 import org.thymeleaf.TemplateEngine;
 import org.thymeleaf.context.Context;
 import java.util.Collections;
+import java.util.concurrent.TimeUnit;
 
 @Service
 public class mailService {
 
-   @Value("${apiKey}")
-   private String apiKey;
+    @Value("${apiKey}")
+    private String apiKey;
     @Autowired
     private TemplateEngine templateEngine;
+
+    private ApiClient buildClient() {
+        ApiClient apiClient = Configuration.getDefaultApiClient();
+        apiClient.setApiKey(apiKey);
+        // Default Brevo SDK timeouts can be very long (or absent), which is why
+        // failures were hanging for 20+ seconds instead of failing fast.
+        // Force a short, explicit timeout so failures surface quickly and clearly.
+        apiClient.setConnectTimeout(8000);
+        apiClient.setReadTimeout(10000);
+        apiClient.setWriteTimeout(10000);
+        return apiClient;
+    }
 
     public void sentVerifyOtp(String username,String email,String otp) throws MessagingException {
 
@@ -34,8 +47,7 @@ public class mailService {
 
         String mgs = templateEngine.process("verify-otp",context);
 
-        ApiClient apiClient = Configuration.getDefaultApiClient();
-        apiClient.setApiKey(apiKey);
+        ApiClient apiClient = buildClient();
 
         TransactionalEmailsApi transactionalEmailsApi = new TransactionalEmailsApi(apiClient);
 
@@ -52,6 +64,14 @@ public class mailService {
         try{
             transactionalEmailsApi.sendTransacEmail(sendSmtpEmail);
         } catch (ApiException e) {
+            System.out.println("Brevo ApiException - code: " + e.getCode()
+                    + " | message: " + e.getMessage()
+                    + " | responseBody: " + e.getResponseBody());
+            throw new RuntimeException(e);
+        } catch (Exception e) {
+            System.out.println("Unexpected mail send error - class: " + e.getClass().getName()
+                    + " | message: " + e.getMessage());
+            e.printStackTrace();
             throw new RuntimeException(e);
         }
 
@@ -69,8 +89,7 @@ public class mailService {
 
         String mgs = templateEngine.process("reset-otp",context);
 
-        ApiClient apiClient = Configuration.getDefaultApiClient();
-        apiClient.setApiKey(apiKey);
+        ApiClient apiClient = buildClient();
 
         TransactionalEmailsApi transactionalEmailsApi = new TransactionalEmailsApi(apiClient);
 
@@ -85,6 +104,14 @@ public class mailService {
         try{
             transactionalEmailsApi.sendTransacEmail(sendSmtpEmail);
         } catch (ApiException e) {
+            System.out.println("Brevo ApiException - code: " + e.getCode()
+                    + " | message: " + e.getMessage()
+                    + " | responseBody: " + e.getResponseBody());
+            throw new RuntimeException(e);
+        } catch (Exception e) {
+            System.out.println("Unexpected mail send error - class: " + e.getClass().getName()
+                    + " | message: " + e.getMessage());
+            e.printStackTrace();
             throw new RuntimeException(e);
         }
 

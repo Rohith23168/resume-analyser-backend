@@ -66,14 +66,6 @@ public class securityService {
             System.out.println("OTP expired");
             return new ResponseEntity<>("OTP expired", HttpStatus.NOT_ACCEPTABLE);
         }
-        if(!verify.getVerifyOtp().equals(reg.getVerifyotp())){
-            return new ResponseEntity<>("Invalid OTP",HttpStatus.NOT_ACCEPTABLE);
-        }
-        if(verify.getVerifyExpiration().before(new Date(System.currentTimeMillis()))){
-            return new ResponseEntity<>("OTP expired",HttpStatus.NOT_ACCEPTABLE);
-        }
-
-
 
         if(! usersTableRepository.existsById(reg.getEmail())){
             usersTable newUser = usersTable.builder()
@@ -113,8 +105,14 @@ public class securityService {
                 mailservice.sentVerifyOtp(verifyEmail.getUsername(), verifyEmail.getEmail(), otp);
                 return new ResponseEntity<>("OTP sent successfully", HttpStatus.OK);
             } catch (Exception e) {
+                // Clean up on failure
                 otpVerifyRepository.deleteById(verifyEmail.getEmail());
-                System.out.println("Mail error: " + e.getMessage());
+                System.out.println("Mail error - class: " + e.getClass().getName());
+                System.out.println("Mail error - message: " + e.getMessage());
+                if (e.getCause() != null) {
+                    System.out.println("Mail error - cause: " + e.getCause().getClass().getName() + " | " + e.getCause().getMessage());
+                }
+                e.printStackTrace();
                 return new ResponseEntity<>("Failed to send OTP. Check your email address.", HttpStatus.SERVICE_UNAVAILABLE);
             }
         } else {
@@ -162,6 +160,8 @@ public class securityService {
             mailservice.sentResetOtp(user.getUsername(),req.getEmail(),otp);
             return new ResponseEntity<>("OTP sent successfully",HttpStatus.OK);
         } catch (Exception e) {
+            System.out.println("Reset OTP mail error - class: " + e.getClass().getName() + " | message: " + e.getMessage());
+            e.printStackTrace();
             return new ResponseEntity<>("Couldn't sent OTP",HttpStatus.SERVICE_UNAVAILABLE);
         }
     }
