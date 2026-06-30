@@ -36,13 +36,17 @@ public class jwtFilter extends OncePerRequestFilter {
                                     FilterChain filterChain)
             throws ServletException, IOException {
 
-        try {
-            // Skip OPTIONS preflight requests
-            if (request.getMethod().equals("OPTIONS")) {
-                filterChain.doFilter(request, response);
-                return;
-            }
+        // Skip OPTIONS preflight requests
+        if (request.getMethod().equals("OPTIONS")) {
+            filterChain.doFilter(request, response);
+            return;
+        }
 
+        // Only JWT/authentication resolution is wrapped in try/catch.
+        // If anything here fails, we simply proceed unauthenticated rather than
+        // breaking the request — we must NOT swallow exceptions thrown by the
+        // actual controller/service further down the chain.
+        try {
             String token = null;
 
             // Read JWT from cookie
@@ -74,12 +78,18 @@ public class jwtFilter extends OncePerRequestFilter {
                     SecurityContextHolder.getContext().setAuthentication(auth);
                 }
             }
-
-            filterChain.doFilter(request, response);
-
         } catch (Exception e) {
-            System.out.println("JWT Filter Error: " + e.getMessage());
-            filterChain.doFilter(request, response);
+            // Auth resolution failed (bad/expired token, malformed JWT, etc).
+            // Log it and continue unauthenticated — downstream security rules will
+            // correctly reject the request with 401 if the endpoint requires auth.
+            System.out.println("JWT Filter Error (auth resolution): " + e.getMessage());
+            SecurityContextHolder.clearContext();
         }
+
+        // The filter chain (and therefore the controller) must run EXACTLY ONCE.
+        // Any exception thrown here is a real application error and must propagate
+        // normally to Spring's exception handling — it must never be caught and
+        // retried by re-calling filterChain.doFilter.
+        filterChain.doFilter(request, response);
     }
 }
