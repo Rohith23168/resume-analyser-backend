@@ -49,15 +49,10 @@ public class jwtFilter extends OncePerRequestFilter {
         try {
             String token = null;
 
-            // Read JWT from cookie
-            Cookie[] cookies = request.getCookies();
-            if (cookies != null) {
-                for (Cookie cookie : cookies) {
-                    if ("entrypasstoken".equals(cookie.getName())) {
-                        token = cookie.getValue();
-                        break;
-                    }
-                }
+// Read JWT from Authorization header
+            String authHeader = request.getHeader("Authorization");
+            if (authHeader != null && authHeader.startsWith("Bearer ")) {
+                token = authHeader.substring(7);
             }
 
             // Validate token and set authentication context

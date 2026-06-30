@@ -125,23 +125,17 @@ public class securityService {
         try{
             authenticationProvider.authenticate( new UsernamePasswordAuthenticationToken(req.getEmail(),req.getPassword()));
             String token = jwt.generateToken(req.getEmail());
-            usersTable user =usersTableRepository.findById(req.getEmail()).orElse(null);
-            HttpHeaders headers = new HttpHeaders();
-            ResponseCookie cookie = ResponseCookie.from("entrypasstoken", token)
-                    .path("/")
-                    .httpOnly(true)
-                    .secure(true)
-                    .sameSite("None")
-                    .maxAge(20 * 24 * 60 * 60)
-                    .build();
+            usersTable user = usersTableRepository.findById(req.getEmail()).orElse(null);
 
-            headers.add(HttpHeaders.SET_COOKIE, cookie.toString());
-            loginResponse loginRes=new loginResponse(user.getUsername(), user.getPreviousResults());
-            return new ResponseEntity<>(loginRes,headers,HttpStatus.OK);
+            loginResponse loginRes = new loginResponse();
+            loginRes.setUsername(user.getUsername());
+            loginRes.setIsPrevious(user.getPreviousResults());
+            loginRes.setToken(token);
+
+            return new ResponseEntity<>(loginRes, HttpStatus.OK);
         } catch (Exception e) {
             return new ResponseEntity<>("Invalid credentials ",HttpStatus.UNAUTHORIZED);
         }
-
     }
 
 
