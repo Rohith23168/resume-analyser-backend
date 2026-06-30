@@ -121,9 +121,8 @@ public class securityService {
     }
 
     public ResponseEntity<?> login(@Valid userLogin req) {
-
         try{
-            authenticationProvider.authenticate( new UsernamePasswordAuthenticationToken(req.getEmail(),req.getPassword()));
+            authenticationProvider.authenticate(new UsernamePasswordAuthenticationToken(req.getEmail(),req.getPassword()));
             String token = jwt.generateToken(req.getEmail());
             usersTable user = usersTableRepository.findById(req.getEmail()).orElse(null);
 

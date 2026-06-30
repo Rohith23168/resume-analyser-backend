@@ -36,8 +36,8 @@ public class successHandler implements AuthenticationSuccessHandler {
         String email = userdata.get("email").toString();
         String name = userdata.get("name").toString();
 
-        if (! usersTableRepository.existsById(email)){
-            usersTable newUser= usersTable.builder()
+        if (!usersTableRepository.existsById(email)) {
+            usersTable newUser = usersTable.builder()
                     .username(name)
                     .email(email)
                     .password("")
@@ -49,18 +49,5 @@ public class successHandler implements AuthenticationSuccessHandler {
         }
 
         String token = jwtService.generateToken(email);
-        ResponseCookie cookie = ResponseCookie.from("entrypasstoken", token)
-                .path("/")
-                .httpOnly(true)
-                .secure(true)
-                .sameSite("None")
-                .maxAge(20 * 24 * 60 * 60)
-                .build();
-
-        response.addHeader("Set-Cookie", cookie.toString());
-        response.sendRedirect("/");
-
-
-
-    }
-}
+        response.sendRedirect("https://resumefrontend-ten.vercel.app/?token=" + token);
+    } }
