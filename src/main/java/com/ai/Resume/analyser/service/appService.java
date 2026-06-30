@@ -23,9 +23,11 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.util.UriUtils;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -47,17 +49,29 @@ public class appService {
     @Autowired
     private usersTableRepo usersTableRepository;
 
+    // Bound the retry loop instead of looping forever on persistent failures.
+    private static final int MAX_GEMINI_ATTEMPTS = 3;
+
     private static final String ANALYSIS_PROMPT_TEMPLATE =
-            "You are a senior technical recruiter and ATS specialist. Evaluate the resume below STRICTLY for the target role(s): %s.\n" +
+            "You are a senior technical recruiter and ATS specialist. Evaluate the resume below for the target role(s): %s.\n" +
                     "\n" +
-                    "Before analyzing, confirm the resume content is genuine resume content (not random text) and that it is reasonably related to the target role(s). " +
-                    "If it is unrelated or not a real resume, return all numeric fields as 0 and all array fields as empty arrays, with summary and experienceLevel as empty strings.\n" +
+                    "IMPORTANT: Treat the target role string as case-insensitive and ignore extra whitespace, punctuation, or minor typos. " +
+                    "Treat common abbreviations and close synonyms as equivalent to the full role name " +
+                    "(e.g. \"java dev\", \"Java Developer\", \"JAVA DEVELOPER\", and \"java backend developer\" all refer to the same role; " +
+                    "\"swe\", \"sde\", and \"software engineer\" all refer to the same role). " +
+                    "Do not penalize the resume for how the role text was capitalized, spaced, or abbreviated.\n" +
+                    "\n" +
+                    "Before analyzing, confirm the resume content is genuine resume content (not random/gibberish text) and that it is at least reasonably or " +
+                    "adjacently related to the target role(s) (e.g. a Backend Developer resume IS relevant to a \"Java Developer\" role search; a Full Stack " +
+                    "Developer resume IS relevant to a \"Frontend Developer\" search). Only return all numeric fields as 0 and all array fields as empty arrays " +
+                    "if the resume is COMPLETELY unrelated to the role(s) (e.g. a chef's resume submitted for a Software Engineer role) or is not a real resume at all.\n" +
                     "\n" +
                     "Scoring philosophy:\n" +
-                    "- Be strict, not lenient. Score 90-100 only for near-perfect, fully role-aligned resumes.\n" +
-                    "- If a section's content is irrelevant to the target role(s), assign zero points for that section.\n" +
+                    "- Be strict, not lenient, but use GRADED scoring — do not zero out entire sections just because they are not a perfect literal match to the role text.\n" +
+                    "- Score 90-100 only for near-perfect, fully role-aligned resumes.\n" +
+                    "- If a section's content is only partially relevant to the target role(s), deduct points proportionally — do not assign zero unless that section is truly unrelated.\n" +
                     "- 50-89: partially relevant, missing keywords/formatting/role alignment.\n" +
-                    "- Below 50: significant relevance or ATS issues.\n" +
+                    "- Below 50: significant relevance or ATS issues, but the resume is still a real, identifiable attempt at the role.\n" +
                     "\n" +
                     "Score atsoptimizationscore separately based on ATS parsing readiness, keyword usage, readability, section clarity, absence of graphics/tables, and role alignment.\n" +
                     "\n" +
@@ -90,25 +104,43 @@ public class appService {
 
     public ResponseEntity<?> extract(String roles, MultipartFile file) throws TikaException, IOException, InterruptedException {
 
+        // Normalize the role text: trim, collapse internal whitespace.
+        // We intentionally do NOT lowercase it for storage/display purposes (job search query, previous report),
+        // but the prompt itself explicitly instructs case-insensitive matching so typed casing never affects scoring.
+        String normalizedRoles = normalizeRoles(roles);
+        if (normalizedRoles.isEmpty()) {
+            return new ResponseEntity<>("Role must not be empty", HttpStatus.BAD_REQUEST);
+        }
+
         Tika tika = new Tika();
         ByteArrayInputStream inpfile = new ByteArrayInputStream(file.getBytes());
         String extracted = tika.parseToString(inpfile);
 
-        String promptText = String.format(ANALYSIS_PROMPT_TEMPLATE, roles, extracted);
+        String promptText = String.format(ANALYSIS_PROMPT_TEMPLATE, normalizedRoles, extracted);
 
         String results = null;
         Client client = Client.builder().apiKey(genKey).build();
         Content content = Content.builder().parts(Part.fromText(promptText)).build();
 
-        while (true) {
+        Exception lastException = null;
+        for (int attempt = 1; attempt <= MAX_GEMINI_ATTEMPTS; attempt++) {
             try {
-                GenerateContentResponse response = client.models.generateContent("gemini-2.5-flash", content, GenerateContentConfig.builder().temperature(0.0f).build());
+                GenerateContentResponse response = client.models.generateContent(
+                        "gemini-2.5-flash", content, GenerateContentConfig.builder().temperature(0.0f).build());
                 results = response.text();
+                lastException = null;
                 break;
             } catch (Exception e) {
-                Thread.sleep(1500);
-                System.out.println(e);
+                lastException = e;
+                System.out.println("Gemini call failed (attempt " + attempt + "/" + MAX_GEMINI_ATTEMPTS + "): " + e.getMessage());
+                if (attempt < MAX_GEMINI_ATTEMPTS) {
+                    Thread.sleep(1500);
+                }
             }
+        }
+
+        if (lastException != null || results == null) {
+            return new ResponseEntity<>("Resume analysis service is temporarily unavailable. Please try again.", HttpStatus.SERVICE_UNAVAILABLE);
         }
 
         int firstBrace = results.indexOf("{");
@@ -146,7 +178,7 @@ public class appService {
                     uname,
                     score,
                     atsScore,
-                    roles,
+                    normalizedRoles,
                     summary,
                     experienceLevel,
                     skills,
@@ -176,8 +208,9 @@ public class appService {
         if (previousTable != null) {
             RestTemplate restTemplate = new RestTemplate();
             List<Job> jobs;
+            String encodedRole = UriUtils.encodeQueryParam(previousTable.getRoles(), StandardCharsets.UTF_8);
             String url = "https://jsearch.p.rapidapi.com/search?query="
-                    + previousTable.getRoles()
+                    + encodedRole
                     + "&location=india&page=1";
             try {
                 JobSearchResponse response = restTemplate.getForObject(url, JobSearchResponse.class);
@@ -244,7 +277,17 @@ public class appService {
         }
     }
 
-    // ===================== Safe JSON helpers =====================
+    // ===================== Helpers =====================
+
+    /**
+     * Trims and collapses internal whitespace in the user-typed role string.
+     * Casing is preserved (not lowercased) since it's used for display and job search,
+     * but the LLM prompt explicitly instructs case-insensitive interpretation.
+     */
+    private String normalizeRoles(String roles) {
+        if (roles == null) return "";
+        return roles.trim().replaceAll("\\s+", " ");
+    }
 
     private int safeInt(JsonNode node, String field) {
         if (node == null || !node.hasNonNull(field)) return 0;
