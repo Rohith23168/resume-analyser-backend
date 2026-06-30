@@ -22,6 +22,31 @@ public class previousTable {
     private int atsoptimizationscore;
     private String roles;
 
+    @Column(length = 1000)
+    private String summary;
+
+    private String experienceLevel;
+
+    @ElementCollection
+    @Column(length = 450)
+    private List<String> skills;
+
+    @ElementCollection
+    @Column(length = 450)
+    private List<String> missingSkills;
+
+    @ElementCollection
+    @Column(length = 450)
+    private List<String> strengths;
+
+    @ElementCollection
+    @Column(length = 450)
+    private List<String> weaknesses;
+
+    @ElementCollection
+    @Column(length = 450)
+    private List<String> interviewTips;
+
     @ElementCollection
     @Column(length = 450)
     private List<String> pros;

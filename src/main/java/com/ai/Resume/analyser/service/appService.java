@@ -4,6 +4,7 @@ package com.ai.Resume.analyser.service;
 import com.ai.Resume.analyser.model.*;
 import com.ai.Resume.analyser.repository.prevTable;
 import com.ai.Resume.analyser.repository.usersTableRepo;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.genai.Client;
 import com.google.genai.types.Content;
@@ -25,6 +26,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -45,74 +47,62 @@ public class appService {
     @Autowired
     private usersTableRepo usersTableRepository;
 
+    private static final String ANALYSIS_PROMPT_TEMPLATE =
+            "You are a senior technical recruiter and ATS specialist. Evaluate the resume below STRICTLY for the target role(s): %s.\n" +
+                    "\n" +
+                    "Before analyzing, confirm the resume content is genuine resume content (not random text) and that it is reasonably related to the target role(s). " +
+                    "If it is unrelated or not a real resume, return all numeric fields as 0 and all array fields as empty arrays, with summary and experienceLevel as empty strings.\n" +
+                    "\n" +
+                    "Scoring philosophy:\n" +
+                    "- Be strict, not lenient. Score 90-100 only for near-perfect, fully role-aligned resumes.\n" +
+                    "- If a section's content is irrelevant to the target role(s), assign zero points for that section.\n" +
+                    "- 50-89: partially relevant, missing keywords/formatting/role alignment.\n" +
+                    "- Below 50: significant relevance or ATS issues.\n" +
+                    "\n" +
+                    "Score atsoptimizationscore separately based on ATS parsing readiness, keyword usage, readability, section clarity, absence of graphics/tables, and role alignment.\n" +
+                    "\n" +
+                    "Return ONLY raw JSON (alphanumeric content only, no markdown fences, no commentary) matching EXACTLY this schema:\n" +
+                    "{\n" +
+                    "  \"score\": number,\n" +
+                    "  \"atsoptimizationscore\": number,\n" +
+                    "  \"summary\": string,\n" +
+                    "  \"experienceLevel\": string,\n" +
+                    "  \"skills\": [string],\n" +
+                    "  \"missingSkills\": [string],\n" +
+                    "  \"strengths\": [string],\n" +
+                    "  \"weaknesses\": [string],\n" +
+                    "  \"interviewTips\": [string],\n" +
+                    "  \"pros\": [string],\n" +
+                    "  \"cons\": [string],\n" +
+                    "  \"suggestions\": [string]\n" +
+                    "}\n" +
+                    "\n" +
+                    "Field rules:\n" +
+                    "- summary: 2-3 neutral sentences describing the candidate's background relative to the role(s).\n" +
+                    "- experienceLevel: exactly one of \"Entry\", \"Mid\", \"Senior\", or \"Lead/Principal\".\n" +
+                    "- skills: only skills actually present in the resume that are relevant to the target role(s).\n" +
+                    "- missingSkills: role-critical skills the resume does NOT demonstrate.\n" +
+                    "- strengths, weaknesses, suggestions, interviewTips, pros, cons: each array item must be under 275 characters, concise and actionable.\n" +
+                    "- Do not include any irrelevant keywords or content unrelated to the target role(s).\n" +
+                    "\n" +
+                    "Resume content:\n" +
+                    "%s\n";
+
     public ResponseEntity<?> extract(String roles, MultipartFile file) throws TikaException, IOException, InterruptedException {
 
         Tika tika = new Tika();
         ByteArrayInputStream inpfile = new ByteArrayInputStream(file.getBytes());
         String extracted = tika.parseToString(inpfile);
 
-        String results=null;
-        Client client =  Client.builder().apiKey(genKey).build();
-        Content content= Content.builder().parts(Part.fromText(extracted), Part.fromText(  "You are now an advanced enterprise-grade ATS resume checker. Your task is to analyze the given resume strictly based on industry-level ATS standards and evaluate it for the specified roles. The evaluation should be moderate to strict (not lenient). A resume should only receive a score between 90 and 100 if it is nearly perfect across all aspects and the content is highly relevant to the specified roles. If any section content is irrelevant to the role, give zero points for that section.\n" +
-                "\nBefore analyzing, ensure the roles and resume content match each other and that the resume content is actual content of a real resume (refer: 1. rules and instructions). If it is unrelated, simply treat it as irrelevant content and follow the instructions for irrelevant content. " +
-                "Analyze this resume for roles: " + roles + "\n" +
-                "Resume Content:\n"  +
-                "\n" +
-                "Rules and Instructions:\n" +
-                "1. Evaluation Categories and Score Allocation (Total 100 points, conditional on role relevance):\n" +
-                "- Contact Information (name, email, phone, LinkedIn/GitHub) – 15 points (always scored if present)\n" +
-                "- Professional Summary / Objective – 10 points (only score if aligned with role)\n" +
-                "- Skills (hard skills, tools, technologies) – 7 points (zero if skills not relevant to role)\n" +
-                "- Education (degree, college, graduation year) – 10 points (score only if relevant for role)\n" +
-                "- Achievements / Projects (relevant and measurable) – 15 points (zero if not relevant to role)\n" +
-                "- Keywords / ATS readiness – 10 points (score only for role-relevant keywords)\n" +
-                "- Formatting / Presentation – 5 points (always scored if well formatted)\n" +
-                "- No grammatical or spelling mistakes (deduct 5 points if any) – 10 points\n" +
-                "- Basic resume evaluation (must meet ATS parsing requirements) – 10 points (score only if structured properly for role content)\n" +
-                "- Professional structure and proper layout – 5 points (always scored if proper layout)\n" +
-                "- Skills matched with roles – 8 points (zero if skills do not match role)\n" +
-                "\n" +
-                "2. ATS Optimization Score (0-100):\n" +
-                "- Score separately based on ATS parsing readiness, keyword usage, readability, section clarity, lack of graphics/tables, content relevance, and alignment with target role.\n" +
-                "- If resume contains irrelevant content for the role, give 0 for the atsoptimizationscore.\n" +
-                "\n" +
-                "3. Scoring Philosophy:\n" +
-                "- Be strict with scoring.\n" +
-                "- A resume should only score 90–100 if nearly flawless and fully relevant to the role.\n" +
-                "- If any section content is irrelevant to the role, assign zero points for that section.\n" +
-                "- 50–89 → Resume is partially relevant but may lack keywords, formatting, or role alignment.\n" +
-                "- Below 50 → Resume has significant relevance or ATS issues.\n" +
-                "\n" +
-                "4. Evaluation Criteria (industrial ATS rules, all relevance-dependent):\n" +
-                "- Proper headings: Contact Information, Summary, Skills, Education, Experience, Projects, Achievements.\n" +
-                "- Bullet points for readability.\n" +
-                "- No images, graphics, or tables that disrupt ATS parsing.\n" +
-                "- Chronological or functional structure.\n" +
-                "- Action-oriented language in achievements.\n" +
-                "- Only include role-relevant keywords; irrelevant keywords give zero points.\n" +
-                "- Balanced hard skills (technical) and soft skills relevant to role.\n" +
-                "- Professional formatting: consistent fonts, bold section titles, simple layout.\n" +
-                "- Concise, measurable content; no long irrelevant descriptions.\n" +
-                "- No spelling or grammar mistakes.\n" +
-                "- Education and work history clearly structured with dates and relevant to role.\n" +
-                "\n" +
-                "5. Irrelevant content:\n" +
-                "- If the resume is completely irrelevant to the role, return score and atsoptimizationscore as 0, and empty arrays for pros, cons, and suggestions.\n" +
-                "\n" +
-                "6. Output Format:\n" +
-                "Return strict raw JSON only (alphanumeric only, no symbols, no commentary). Response structure:\n" +
-                "{\n" +
-                "  \"score\": number,\n" +
-                "  \"atsoptimizationscore\": number,\n" +
-                "  \"pros\": [array of strings](String length <275(chars)),\n" +
-                "  \"cons\": [array of strings](String length <275(chars)),\n" +
-                "  \"suggestions\": [array of strings](String length <275(chars))\n" +
-                "}\n"
+        String promptText = String.format(ANALYSIS_PROMPT_TEMPLATE, roles, extracted);
 
-        )).build();
-        while (true){
-            try{
-                GenerateContentResponse response = client.models.generateContent("gemini-2.5-flash",content, GenerateContentConfig.builder().temperature(0.0f).build());
+        String results = null;
+        Client client = Client.builder().apiKey(genKey).build();
+        Content content = Content.builder().parts(Part.fromText(promptText)).build();
+
+        while (true) {
+            try {
+                GenerateContentResponse response = client.models.generateContent("gemini-2.5-flash", content, GenerateContentConfig.builder().temperature(0.0f).build());
                 results = response.text();
                 break;
             } catch (Exception e) {
@@ -127,70 +117,116 @@ public class appService {
             results = results.substring(firstBrace, lastBrace + 1);
         }
 
-
+        JsonNode node;
         ObjectMapper objectMapper = new ObjectMapper();
-        resultsDto  resultsDto = objectMapper.readValue(results, resultsDto.class);
-        if(resultsDto.getScore() !=0){
-            String uname=SecurityContextHolder.getContext().getAuthentication().getName();
-            previousTable processedData = new previousTable(uname,resultsDto.getScore(),resultsDto.getAtsoptimizationscore(),roles,resultsDto.getPros(),resultsDto.getCons(),resultsDto.getSuggestions());
+        try {
+            node = objectMapper.readTree(results);
+        } catch (Exception e) {
+            System.out.println("Failed to parse Gemini response as JSON: " + e.getMessage());
+            return new ResponseEntity<>("Invalid document", HttpStatus.NOT_ACCEPTABLE);
+        }
+
+        int score = safeInt(node, "score");
+        int atsScore = safeInt(node, "atsoptimizationscore");
+        String summary = safeText(node, "summary");
+        String experienceLevel = safeText(node, "experienceLevel");
+        List<String> skills = safeStringList(node, "skills");
+        List<String> missingSkills = safeStringList(node, "missingSkills");
+        List<String> strengths = safeStringList(node, "strengths");
+        List<String> weaknesses = safeStringList(node, "weaknesses");
+        List<String> interviewTips = safeStringList(node, "interviewTips");
+        List<String> pros = safeStringList(node, "pros");
+        List<String> cons = safeStringList(node, "cons");
+        List<String> suggestions = safeStringList(node, "suggestions");
+
+        if (score != 0) {
+            String uname = SecurityContextHolder.getContext().getAuthentication().getName();
+
+            previousTable processedData = new previousTable(
+                    uname,
+                    score,
+                    atsScore,
+                    roles,
+                    summary,
+                    experienceLevel,
+                    skills,
+                    missingSkills,
+                    strengths,
+                    weaknesses,
+                    interviewTips,
+                    pros,
+                    cons,
+                    suggestions
+            );
             previousTableRepo.save(processedData);
+
             usersTable usermod = usersTableRepository.findById(uname).orElse(null);
-            if(usermod != null){
+            if (usermod != null) {
                 usermod.setPreviousResults(true);
                 usersTableRepository.save(usermod);
             }
-            return  new ResponseEntity<>("Analysed successfully", HttpStatus.OK);
+            return new ResponseEntity<>("Analysed successfully", HttpStatus.OK);
         }
 
-        return  new ResponseEntity<>("Invalid document", HttpStatus.NOT_ACCEPTABLE);
-
-
+        return new ResponseEntity<>("Invalid document", HttpStatus.NOT_ACCEPTABLE);
     }
 
     public ResponseEntity<?> lastReport() {
         previousTable previousTable = previousTableRepo.findById(SecurityContextHolder.getContext().getAuthentication().getName()).orElse(null);
-        if(previousTable != null){
-            // Job from API
+        if (previousTable != null) {
             RestTemplate restTemplate = new RestTemplate();
             List<Job> jobs;
             String url = "https://jsearch.p.rapidapi.com/search?query="
                     + previousTable.getRoles()
                     + "&location=india&page=1";
-            try{
+            try {
                 JobSearchResponse response = restTemplate.getForObject(url, JobSearchResponse.class);
-                jobs = response.getResults();
-            }
-            catch (Exception e) {
+                jobs = response != null && response.getResults() != null ? response.getResults() : new ArrayList<>();
+            } catch (Exception e) {
                 System.out.println(e.getMessage());
-                return new ResponseEntity<>("Job Fetch Failed",HttpStatus.NOT_FOUND);
+                return new ResponseEntity<>("Job Fetch Failed", HttpStatus.NOT_FOUND);
             }
-            resultsDto resultsDto = new resultsDto(previousTable.getScore(),previousTable.getAtsoptimizationscore(),previousTable.getPros(),previousTable.getCons(),previousTable.getSuggestions(),jobs);
-            return  new ResponseEntity<>(resultsDto,HttpStatus.OK);
-        }
-        else {
-            return new ResponseEntity<>("No previous Analysis",HttpStatus.NOT_FOUND);
+
+            resultsDto resultsDto = new resultsDto(
+                    previousTable.getScore(),
+                    previousTable.getAtsoptimizationscore(),
+                    nullToEmpty(previousTable.getSummary()),
+                    nullToEmpty(previousTable.getExperienceLevel()),
+                    nullToEmptyList(previousTable.getSkills()),
+                    nullToEmptyList(previousTable.getMissingSkills()),
+                    nullToEmptyList(previousTable.getStrengths()),
+                    nullToEmptyList(previousTable.getWeaknesses()),
+                    nullToEmptyList(previousTable.getInterviewTips()),
+                    nullToEmptyList(previousTable.getPros()),
+                    nullToEmptyList(previousTable.getCons()),
+                    nullToEmptyList(previousTable.getSuggestions()),
+                    jobs
+            );
+            return new ResponseEntity<>(resultsDto, HttpStatus.OK);
+        } else {
+            return new ResponseEntity<>("No previous Analysis", HttpStatus.NOT_FOUND);
         }
     }
 
     public ResponseEntity<?> logout() {
         HttpHeaders headers = new HttpHeaders();
-        ResponseCookie cookie = ResponseCookie.from("entrypasstoken","").httpOnly(true).secure(false).sameSite("Strict").maxAge(0).path("/").build();
-        headers.add(HttpHeaders.SET_COOKIE,cookie.toString());
-        return new ResponseEntity<>("Successfully loggedOut",headers,HttpStatus.OK);
+        ResponseCookie cookie = ResponseCookie.from("entrypasstoken", "").httpOnly(true).secure(false).sameSite("Strict").maxAge(0).path("/").build();
+        headers.add(HttpHeaders.SET_COOKIE, cookie.toString());
+        return new ResponseEntity<>("Successfully loggedOut", headers, HttpStatus.OK);
     }
 
     public ResponseEntity<?> deleteAccount() {
 
-        try{
-            String uname=SecurityContextHolder.getContext().getAuthentication().getName();
+        try {
+            String uname = SecurityContextHolder.getContext().getAuthentication().getName();
             usersTableRepository.deleteById(uname);
             previousTableRepo.deleteById(uname);
             HttpHeaders headers = new HttpHeaders();
-            ResponseCookie cookie = ResponseCookie.from("entrypasstoken","").httpOnly(true).secure(false).sameSite("Strict").maxAge(0).path("/").build();
-            headers.add(HttpHeaders.SET_COOKIE,cookie.toString());
-            return new ResponseEntity<>("Account deleted successfully",headers,HttpStatus.OK);
+            ResponseCookie cookie = ResponseCookie.from("entrypasstoken", "").httpOnly(true).secure(false).sameSite("Strict").maxAge(0).path("/").build();
+            headers.add(HttpHeaders.SET_COOKIE, cookie.toString());
+            return new ResponseEntity<>("Account deleted successfully", headers, HttpStatus.OK);
         } catch (Exception e) {
-            return new ResponseEntity<>("Failed to delete",HttpStatus.NOT_FOUND);
+            return new ResponseEntity<>("Failed to delete", HttpStatus.NOT_FOUND);
         }
     }
 
@@ -208,5 +244,39 @@ public class appService {
         }
     }
 
+    // ===================== Safe JSON helpers =====================
 
+    private int safeInt(JsonNode node, String field) {
+        if (node == null || !node.hasNonNull(field)) return 0;
+        JsonNode value = node.get(field);
+        return value.isNumber() ? value.asInt() : 0;
     }
+
+    private String safeText(JsonNode node, String field) {
+        if (node == null || !node.hasNonNull(field)) return "";
+        JsonNode value = node.get(field);
+        return value.isTextual() ? value.asText() : "";
+    }
+
+    private List<String> safeStringList(JsonNode node, String field) {
+        List<String> result = new ArrayList<>();
+        if (node == null || !node.hasNonNull(field)) return result;
+        JsonNode arr = node.get(field);
+        if (!arr.isArray()) return result;
+        for (JsonNode item : arr) {
+            if (item != null && item.isTextual() && !item.asText().isBlank()) {
+                result.add(item.asText());
+            }
+        }
+        return result;
+    }
+
+    private String nullToEmpty(String value) {
+        return value == null ? "" : value;
+    }
+
+    private List<String> nullToEmptyList(List<String> value) {
+        return value == null ? new ArrayList<>() : value;
+    }
+
+}

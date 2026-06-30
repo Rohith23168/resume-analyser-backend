@@ -12,12 +12,18 @@ import java.util.List;
 @NoArgsConstructor
 public class resultsDto {
 
-
-    private  int score;
+    private int score;
     private int atsoptimizationscore;
+    private String summary;
+    private String experienceLevel;
+    private List<String> skills;
+    private List<String> missingSkills;
+    private List<String> strengths;
+    private List<String> weaknesses;
+    private List<String> interviewTips;
     private List<String> pros;
     private List<String> cons;
     private List<String> suggestions;
-    private List<Job>  jobs;
+    private List<Job> jobs;
 
 }
