@@ -113,9 +113,8 @@ public class securityService {
                 mailservice.sentVerifyOtp(verifyEmail.getUsername(), verifyEmail.getEmail(), otp);
                 return new ResponseEntity<>("OTP sent successfully", HttpStatus.OK);
             } catch (Exception e) {
-                // Clean up on failure
                 otpVerifyRepository.deleteById(verifyEmail.getEmail());
-                System.out.println("Mail error: " + e.getMessage()); // temporary debug log
+                System.out.println("Mail error: " + e.getMessage());
                 return new ResponseEntity<>("Failed to send OTP. Check your email address.", HttpStatus.SERVICE_UNAVAILABLE);
             }
         } else {
