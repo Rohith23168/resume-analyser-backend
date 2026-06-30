@@ -37,11 +37,15 @@ public class appService {
     @Value("${genKey}")
     private String genKey ;
 
-    @Value("${rapidapi.key}")
-    private String rapidApiKey;
+    // ===== Adzuna credentials (replaces RapidAPI) =====
+    @Value("${adzuna.app-id}")
+    private String adzunaAppId;
 
-    @Value("${rapidapi.host}")
-    private String rapidApiHost;
+    @Value("${adzuna.app-key}")
+    private String adzunaAppKey;
+
+    @Value("${adzuna.country}")
+    private String adzunaCountry;
 
     @Autowired
     private prevTable previousTableRepo;
@@ -209,14 +213,21 @@ public class appService {
             RestTemplate restTemplate = new RestTemplate();
             List<Job> jobs;
             String encodedRole = UriUtils.encodeQueryParam(previousTable.getRoles(), StandardCharsets.UTF_8);
-            String url = "https://jsearch.p.rapidapi.com/search?query="
-                    + encodedRole
-                    + "&location=india&page=1";
+
+            // ===== Adzuna job search (replaces RapidAPI/JSearch) =====
+            // Adzuna endpoint pattern: https://api.adzuna.com/v1/api/jobs/{country}/search/{page}
+            String url = "https://api.adzuna.com/v1/api/jobs/" + adzunaCountry + "/search/1"
+                    + "?app_id=" + adzunaAppId
+                    + "&app_key=" + adzunaAppKey
+                    + "&what=" + encodedRole
+                    + "&results_per_page=10"
+                    + "&content-type=application/json";
+
             try {
                 JobSearchResponse response = restTemplate.getForObject(url, JobSearchResponse.class);
                 jobs = response != null && response.getResults() != null ? response.getResults() : new ArrayList<>();
             } catch (Exception e) {
-                System.out.println(e.getMessage());
+                System.out.println("Adzuna job fetch failed: " + e.getMessage());
                 return new ResponseEntity<>("Job Fetch Failed", HttpStatus.NOT_FOUND);
             }
 
