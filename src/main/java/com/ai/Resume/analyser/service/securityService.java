@@ -42,9 +42,29 @@ public class securityService {
 
     public ResponseEntity<?> register(userRegister reg) {
 
+        System.out.println("========== REGISTER API ==========");
+        System.out.println("Email: " + reg.getEmail());
+        System.out.println("OTP from request: " + reg.getVerifyotp());
+
         otpVerify verify = otpVerifyRepository.findById(reg.getEmail()).orElse(null);
-        if( verify == null){
-            return new ResponseEntity<>("Unauthorised request",HttpStatus.UNAUTHORIZED);
+
+        System.out.println("OTP object from DB: " + verify);
+
+        if (verify == null) {
+            System.out.println("OTP record NOT FOUND in database");
+            return new ResponseEntity<>("Unauthorised request", HttpStatus.UNAUTHORIZED);
+        }
+
+        System.out.println("OTP in DB: " + verify.getVerifyOtp());
+
+        if (!verify.getVerifyOtp().equals(reg.getVerifyotp())) {
+            System.out.println("OTP does not match");
+            return new ResponseEntity<>("Invalid OTP", HttpStatus.NOT_ACCEPTABLE);
+        }
+
+        if (verify.getVerifyExpiration().before(new Date(System.currentTimeMillis()))) {
+            System.out.println("OTP expired");
+            return new ResponseEntity<>("OTP expired", HttpStatus.NOT_ACCEPTABLE);
         }
         if(!verify.getVerifyOtp().equals(reg.getVerifyotp())){
             return new ResponseEntity<>("Invalid OTP",HttpStatus.NOT_ACCEPTABLE);
